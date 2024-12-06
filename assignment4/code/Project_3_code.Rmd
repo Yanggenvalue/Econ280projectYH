@@ -1,0 +1,142 @@
+---
+title: "Assignemnt 4"
+output: html_document
+date: "2024-10-24"
+---
+
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(plm)
+library(sandwich)
+library(xtable)
+```
+
+
+```{r}
+setwd("C:/Users/yangh/Downloads/assignment_3")
+union_dta <- read_excel("data/State_Union_Membership_Density_1964-2021.xlsx")
+table_2_data <- read.csv("data/table_2_data.csv")
+```
+
+
+
+```{r}
+
+union_dta <- drop_na(union_dta)
+
+#deals with weird date labels
+union_dta <- union_dta %>%
+  rename_with(
+    ~ str_replace(., "%Mem(\\d{2})", function(x) {
+      year <- as.numeric(str_extract(x, "\\d{2}"))
+      ifelse(year >= 70, paste0("19", year), paste0("20", year))  # Handle 1900s and 2000s
+    }),
+    starts_with("%Mem")
+  )
+
+union_dta <- union_dta %>%
+  pivot_longer(
+    cols = -c(`State Name`,`State ID`),   
+    names_to = "year",             
+    values_to = "union_density" 
+  )
+union_dta$year <- as.integer(union_dta$year)
+union_dta <- union_dta %>%
+  rename(statecode = `State Name`)
+extension_data <- table_2_data %>%
+  left_join(union_dta, by = c("statecode", "year"))
+
+```
+
+```{r}
+
+
+# Regression 1
+psi1 <- lm(infl_reg_sign ~ L4_mean_une + L4_rp + union_density, data = extension_data)
+cluster_mat <- vcovCL(psi1, cluster = ~statecode)
+psi1_cl <- coeftest(psi1, vcov = cluster_mat)
+
+# Extract coefficients, SEs, and p-values
+psi1_cof <- psi1_cl["L4_rp", "Estimate"]
+psi1_se <- psi1_cl["L4_rp", "Std. Error"]
+union_cof <- psi1_cl["union_density", "Estimate"]
+union_se <- psi1_cl["union_density", "Std. Error"]
+union_p <- psi1_cl["union_density", "Pr(>|t|)"]
+
+# Regression 2
+psi2 <- plm(infl_reg_sign ~ L4_mean_une + L4_rp + union_density,
+            data = extension_data,
+            index = c("statecode"), 
+            model = "within")
+
+psi2_cl <- coeftest(psi2, vcov. = vcovHC, type = "HC1")
+psi2_cof <- psi2_cl["L4_rp", "Estimate"]
+psi2_se <- psi2_cl["L4_rp", "Std. Error"]
+union2_cof <- psi2_cl["union_density", "Estimate"]
+union2_se <- psi2_cl["union_density", "Std. Error"]
+union2_p <- psi2_cl["union_density", "Pr(>|t|)"]
+
+# Regression 3
+psi3 <- plm(infl_reg_sign ~ L4_mean_une + L4_rp + union_density, 
+            data = extension_data,
+            index = c("statecode", "date"), 
+            model = "within",
+            effect = "twoway")
+
+psi3_cl <- coeftest(psi3, vcov. = vcovHC, type = "HC1")
+psi3_cof <- psi3_cl["L4_rp", "Estimate"]
+psi3_se <- psi3_cl["L4_rp", "Std. Error"]
+union3_cof <- psi3_cl["union_density", "Estimate"]
+union3_se <- psi3_cl["union_density", "Std. Error"]
+union3_p <- psi3_cl["union_density", "Pr(>|t|)"]
+
+# Regression 4
+psi4 <- plm(infl_reg_sign ~ L4_mean_une + L4_rp + union_density | L4_d20_qt_bartik_sa + L4_rp + union_density, 
+            data = extension_data,
+            index = c("statecode", "date"),
+            model = "within",
+            effect = "twoway")
+
+psi4_cl <- coeftest(psi4, vcov. = vcovHC, type = "HC1")
+psi4_cof <- psi4_cl["L4_rp", "Estimate"]
+psi4_se <- psi4_cl["L4_rp", "Std. Error"]
+union4_cof <- psi4_cl["union_density", "Estimate"]
+union4_se <- psi4_cl["union_density", "Std. Error"]
+union4_p <- psi4_cl["union_density", "Pr(>|t|)"]
+
+# Function to add significance stars
+add_significance <- function(coef, pval) {
+  if (pval < 0.01) return(paste0(round(coef, 3), "***"))
+  if (pval < 0.05) return(paste0(round(coef, 3), "**"))
+  if (pval < 0.1) return(paste0(round(coef, 3), "*"))
+  return(as.character(round(coef, 3)))
+}
+
+# Add stars to coefficients
+union_cof_star <- add_significance(union_cof, union_p)
+union2_cof_star <- add_significance(union2_cof, union2_p)
+union3_cof_star <- add_significance(union3_cof, union3_p)
+union4_cof_star <- add_significance(union4_cof, union4_p)
+
+# Build the table
+table <- tibble(
+  label = c("", "", "Panel A:", "Union Density Coefficent", "",
+            "Panel B:", "psi", "",
+            "State effects", "Time effects"),
+  col1 = c("No fixed effects", "(1)", "", union_cof_star, paste0("(", round(union_se, 4), ")"),
+           "", round(psi1_cof, 3), paste0("(", round(psi1_se, 3), ")"), "", ""),
+  col2 = c("No time effects", "(2)", "", union2_cof_star, paste0("(", round(union2_se, 4), ")"),
+           "", round(psi2_cof, 3), paste0("(", round(psi2_se, 3), ")"), "Yes", ""),
+  col3 = c("Lagged unempl.", "(3)", "", union3_cof_star, paste0("(", round(union3_se, 4), ")"),
+           "", round(psi3_cof, 3), paste0("(", round(psi3_se, 3), ")"), "Yes", "Yes"),
+  col4 = c("Tradeable demand IV", "(4)", "", union4_cof_star, paste0("(", round(union4_se, 4), ")"),
+           "", round(psi4_cof, 3), paste0("(", round(psi4_se, 3), ")"), "Yes", "Yes")
+)
+
+# Export the table to LaTeX
+print(xtable(table, type = "latex"), file = "./output/union_regs.tex", include.rownames = FALSE)
+
+```
